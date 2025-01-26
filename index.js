@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const mineflayer = require('mineflayer');
 const express = require('express');
-const readline = require('readline');
+require('dotenv').config();
 
 // Express Sunucusu (UptimeRobot için)
 const app = express();
@@ -16,209 +16,235 @@ const discordClient = new Client({
 // Bot Verileri
 const minecraftBots = {}; // Minecraft botlarını saklar
 const botStartTimes = {}; // Botların çalışma sürelerini saklar
-const userBots = {}; // Kullanıcıların sahip olduğu botları saklar
-const bannedUsers = {}; // Banlanan kullanıcıları saklar
+const allowedUserId = 'YOUR_USER_ID'; // Sunucu sahibinin Discord kullanıcı ID'sini buraya yazın
+let specialUserId = null; // Sınırsız bot ekleyebilen kullanıcıyı tutar
 
-// Kullanıcıdan Token ve User ID Alma
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+// Discord Bot Mesaj Olayı
+discordClient.on('messageCreate', (message) => {
+  if (message.author.bot) return; // Botların mesajlarını yok sayar
 
-rl.question('Discord Bot Tokenini girin: ', (token) => {
-  rl.question('Sunucu kurucusunun ID\'sini girin: ', (allowedUserId) => {
-    const ALLOWED_USER_ID = allowedUserId; // Kullanıcı ID'sini kaydet
+  // qbot komutu ile Minecraft botu başlatma
+  if (message.content.startsWith('qbot')) {
+    const args = message.content.split(' ');
+    const serverIP = args[1];
+    const password = args[2];
+    const botName = args[3];
 
-    // Discord Bot Mesaj Olayı
-    discordClient.on('messageCreate', (message) => {
-      if (message.content.startsWith('qbot')) {
-        const args = message.content.split(' ');
-        const serverIP = args[1];
-        const password = args[2];
-        const botName = args[3];
+    if (!serverIP || !password || !botName) {
+      return message.reply('Kullanım: qbot <sunucu-ip> <şifre> <isim>');
+    }
 
-        if (!serverIP || !password || !botName) {
-          return message.reply('Kullanım: qbot <sunucu-ip> <şifre> <isim>');
-        }
+    if (minecraftBots[botName]) {
+      return message.reply(`Bu isimde bir bot zaten aktif: ${botName}`);
+    }
 
-        if (minecraftBots[botName]) {
-          return message.reply(`Bu isimde bir bot zaten aktif: ${botName}`);
-        }
-
-        const mcBot = mineflayer.createBot({
-          host: serverIP,
-          username: botName,
-          version: '1.16.4',
-        });
-
-        minecraftBots[botName] = { bot: mcBot, serverIP, password };
-        botStartTimes[botName] = Date.now();
-
-        // Kullanıcıları botla ilişkilendir
-        if (!userBots[message.author.id]) {
-          userBots[message.author.id] = [];
-        }
-        userBots[message.author.id].push(botName);
-
-        mcBot.once('spawn', () => {
-          message.reply(`Bot sunucuya bağlandı: ${botName}`);
-          mcBot.chat(`/register ${password} ${password}`);
-          mcBot.chat(`/login ${password}`);
-          setInterval(() => mcBot.chat('/is go'), 60000);
-          setInterval(() => mcBot.chat('/çiftçi sell all'), 300000);
-        });
-
-        mcBot.on('end', () => {
-          delete minecraftBots[botName];
-          delete botStartTimes[botName];
-          message.reply(`Bot bağlantısı kesildi: ${botName}`);
-        });
-
-        mcBot.on('error', (err) => {
-          console.error('Minecraft botu bağlantı hatası:', err);
-          message.reply(`Bot bağlantı hatası: ${err.message}`);
-        });
-      } else if (message.content.startsWith('qbotkapat')) {
-        const args = message.content.split(' ');
-        const botName = args[1];
-
-        if (!botName || !minecraftBots[botName]) {
-          return message.reply('Geçerli bir bot ismi girin veya bot aktif değil.');
-        }
-
-        // Eğer bot sahibi kişi değilse, botu kapatma
-        if (userBots[message.author.id] && !userBots[message.author.id].includes(botName)) {
-          return message.reply('Bu bot size ait değil!');
-        }
-
-        const bot = minecraftBots[botName].bot;
-        bot.end();
-        delete minecraftBots[botName];
-        delete botStartTimes[botName];
-
-        // Kullanıcıdan bot ismini sil
-        userBots[message.author.id] = userBots[message.author.id].filter(name => name !== botName);
-        message.reply(`Bot ${botName} başarıyla kapatıldı.`);
-      } else if (message.content.startsWith('qsay')) {
-        const args = message.content.split(' ');
-        const botName = args[1];
-        const text = args.slice(2).join(' ');
-
-        if (!botName || !minecraftBots[botName]) {
-          // Bot ismi belirtilmemişse, tüm botlara gönder
-          Object.keys(minecraftBots).forEach(name => {
-            minecraftBots[name].bot.chat(text);
-          });
-        } else {
-          // Belirtilen botun Minecraft sunucusuna mesaj gönder
-          minecraftBots[botName].bot.chat(text);
-        }
-
-        message.reply(`Mesaj gönderildi: ${text}`);
-      } else if (message.content.startsWith('qduyuru')) {
-        const args = message.content.split(' ');
-        const text = args.slice(1, -1).join(' ');
-        const duration = parseInt(args[args.length - 1]);
-
-        if (!text || isNaN(duration)) {
-          return message.reply('Kullanım: qduyuru <mesaj> <süre (saniye cinsinden)>');
-        }
-
-        // Süre boyunca sürekli olarak mesajı gönder
-        setInterval(() => {
-          Object.keys(minecraftBots).forEach(name => {
-            minecraftBots[name].bot.chat(text);
-          });
-        }, duration * 1000);
-
-        message.reply(`Duyuru başlatıldı. Mesaj, ${duration} saniye boyunca gönderilecek.`);
-      } else if (message.content.startsWith('qileri')) {
-        const args = message.content.split(' ');
-        const botName = args[1];
-        const steps = parseInt(args[2]);
-
-        if (!minecraftBots[botName]) {
-          return message.reply('Bu isimde bir bot yok.');
-        }
-
-        // Botu belirtilen sayıda ileri gönder
-        const bot = minecraftBots[botName].bot;
-        for (let i = 0; i < steps; i++) {
-          bot.setControlState('forward', true);
-          setTimeout(() => bot.setControlState('forward', false), 1000);
-        }
-
-        message.reply(`${botName} botu ${steps} adım ileri gitti.`);
-      } else if (message.content.startsWith('qgeri')) {
-        const args = message.content.split(' ');
-        const botName = args[1];
-        const steps = parseInt(args[2]);
-
-        if (!minecraftBots[botName]) {
-          return message.reply('Bu isimde bir bot yok.');
-        }
-
-        // Botu belirtilen sayıda geri gönder
-        const bot = minecraftBots[botName].bot;
-        for (let i = 0; i < steps; i++) {
-          bot.setControlState('back', true);
-          setTimeout(() => bot.setControlState('back', false), 1000);
-        }
-
-        message.reply(`${botName} botu ${steps} adım geri gitti.`);
-      } else if (message.content.startsWith('qekle')) {
-        // Sunucu kurucusu 30 günlük sınırsız bot ekleyebilir
-        if (message.author.id !== ALLOWED_USER_ID) {
-          return message.reply('Bu komutu sadece sunucu kurucusu kullanabilir.');
-        }
-
-        const user = message.mentions.users.first();
-        if (!user) {
-          return message.reply('Bir kullanıcı etiketlemeniz gerekiyor.');
-        }
-
-        // 30 gün boyunca sınırsız bot ekleyebilme
-        const expirationTime = Date.now() + (30 * 24 * 60 * 60 * 1000);
-        // Sınırsız bot ekleme yetkisini kaydediyoruz
-        userBots[user.id] = { canAddBotsUntil: expirationTime };
-        message.reply(`${user.tag} 30 günlük sınırsız bot ekleyebilme hakkı verildi.`);
-      } else if (message.content.startsWith('qban')) {
-        // Etiketlenen kişiyi bottan banlar
-        const user = message.mentions.users.first();
-        if (!user) {
-          return message.reply('Bir kullanıcı etiketlemeniz gerekiyor.');
-        }
-
-        // Banlama işlemi
-        if (!userBots[user.id]) {
-          return message.reply('Bu kişi daha önce hiç bot eklemedi.');
-        }
-
-        userBots[user.id].forEach(botName => {
-          if (minecraftBots[botName]) {
-            minecraftBots[botName].bot.end();
-            delete minecraftBots[botName];
-          }
-        });
-
-        delete userBots[user.id];
-        bannedUsers[user.id] = true;
-
-        message.reply(`${user.tag} botlarından banlandı.`);
-      } else if (message.content.startsWith('qunban')) {
-        // Banlanan kişiyi serbest bırakır
-        const user = message.mentions.users.first();
-        if (!user || !bannedUsers[user.id]) {
-          return message.reply('Banlı olmayan bir kullanıcıyı serbest bırakamazsınız.');
-        }
-
-        delete bannedUsers[user.id];
-        message.reply(`${user.tag} banı kaldırıldı.`);
+    // Kullanıcı bir bot oluşturabilir mi kontrol etme
+    if (!specialUserId || specialUserId !== message.author.id) {
+      const userBots = Object.keys(minecraftBots).filter(botName => minecraftBots[botName].ownerId === message.author.id);
+      if (userBots.length >= 1) {
+        return message.reply('Birden fazla bot oluşturamazsınız. Sunucu sahibinin izni ile sınırsız bot ekleme hakkınız var.');
       }
+    }
+
+    const mcBot = mineflayer.createBot({
+      host: serverIP,
+      username: botName,
+      version: '1.16.4',
     });
 
-    discordClient.login(token); // Token ile giriş yap
+    minecraftBots[botName] = { bot: mcBot, serverIP, password, ownerId: message.author.id };
+    botStartTimes[botName] = Date.now();
 
-    rl.close(); // readline'ı kapat
-  });
+    mcBot.once('spawn', () => {
+      message.reply(`Bot sunucuya bağlandı: ${botName}`);
+      mcBot.chat(`/register ${password} ${password}`);
+      mcBot.chat(`/login ${password}`);
+      // /is go komutu
+      setInterval(() => mcBot.chat('/is go'), 60000); // 1 dakikada bir /is go komutunu gönder
+      // /çiftçi sell all komutu
+      setInterval(() => mcBot.chat('/çiftçi sell all'), 300000); // 5 dakikada bir /çiftçi sell all komutunu gönder
+    });
+
+    mcBot.on('end', () => {
+      delete minecraftBots[botName];
+      delete botStartTimes[botName];
+      message.reply(`Bot bağlantısı kesildi: ${botName}`);
+    });
+
+    mcBot.on('error', (err) => {
+      console.error('Minecraft botu bağlantı hatası:', err);
+      message.reply(`Bot bağlantı hatası: ${err.message}`);
+    });
+  }
+
+  // qbotkapat komutu ile botu kapatma
+  else if (message.content.startsWith('qbotkapat')) {
+    const args = message.content.split(' ');
+    const botName = args[1];
+
+    if (!botName || !minecraftBots[botName]) {
+      return message.reply('Geçerli bir bot ismi girin veya bot aktif değil.');
+    }
+
+    const bot = minecraftBots[botName].bot;
+    bot.end();
+    delete minecraftBots[botName];
+    delete botStartTimes[botName];
+
+    message.reply(`Bot ${botName} başarıyla kapatıldı.`);
+  }
+
+  // qbilgi komutu ile bot bilgilerini gösterme
+  else if (message.content.startsWith('qbilgi')) {
+    if (message.author.id !== allowedUserId) {
+      return message.reply('Bu komutu sadece sunucu kurucusu kullanabilir.');
+    }
+
+    const botInfo = Object.keys(minecraftBots)
+      .map((botName) => {
+        const { serverIP, password } = minecraftBots[botName];
+        const uptime = Math.floor((Date.now() - botStartTimes[botName]) / 60000);
+        return `Bot İsmi: ${botName}\nSunucu: ${serverIP}\nŞifre: ${password}\nÇalışma Süresi: ${uptime} dakika\n`;
+      })
+      .join('\n-----------------\n');
+
+    message.reply(botInfo || 'Aktif bot yok.');
+  }
+
+  // qsay komutu ile Minecraft sunucusuna mesaj gönderme
+  else if (message.content.startsWith('qsay')) {
+    const args = message.content.split(' ');
+    const botName = args[1];
+    const text = args.slice(2).join(' ');
+
+    if (!botName) {
+      // Mesaj tüm botlara gönderilir
+      Object.keys(minecraftBots).forEach(botName => {
+        minecraftBots[botName].bot.chat(text);
+      });
+      return message.reply('Mesaj tüm botlara gönderildi.');
+    }
+
+    if (!minecraftBots[botName]) {
+      return message.reply('Bu isimde bir bot aktif değil.');
+    }
+
+    minecraftBots[botName].bot.chat(text);
+    message.reply(`${botName} botuna mesaj gönderildi.`);
+  }
+
+  // qduyuru komutu ile Minecraft sunucusuna duyuru gönderme
+  else if (message.content.startsWith('qduyuru')) {
+    const args = message.content.split(' ');
+    const text = args.slice(1).join(' ');
+    const duration = args[0]; // Duyuru süresi
+
+    if (!text || !duration) {
+      return message.reply('Kullanım: qduyuru <süre> <mesaj>');
+    }
+
+    const durationMs = parseInt(duration) * 1000;
+    if (isNaN(durationMs)) {
+      return message.reply('Geçerli bir süre girin.');
+    }
+
+    // Süre boyunca sürekli olarak mesaj gönderme
+    setInterval(() => {
+      Object.keys(minecraftBots).forEach(botName => {
+        minecraftBots[botName].bot.chat(text);
+      });
+    }, durationMs);
+
+    message.reply('Duyuru yapılıyor.');
+  }
+
+  // qileri komutu ile Minecraft botunu ileri gönderme
+  else if (message.content.startsWith('qileri')) {
+    const args = message.content.split(' ');
+    const botName = args[1];
+    const steps = parseInt(args[2]);
+
+    if (!botName || !minecraftBots[botName]) {
+      return message.reply('Geçerli bir bot ismi girin veya bot aktif değil.');
+    }
+
+    if (isNaN(steps) || steps <= 0) {
+      return message.reply('Geçerli bir sayı girin.');
+    }
+
+    const bot = minecraftBots[botName].bot;
+    for (let i = 0; i < steps; i++) {
+      bot.lookAt(bot.entity.position.offset(0, 0, 1));  // Bu örnekte botu ileri göndermek için
+      bot.setControlState('forward', true);
+      setTimeout(() => {
+        bot.setControlState('forward', false);
+      }, 1000);
+    }
+    message.reply(`${botName} botu ${steps} adım ileri gönderildi.`);
+  }
+
+  // qgeri komutu ile Minecraft botunu geri gönderme
+  else if (message.content.startsWith('qgeri')) {
+    const args = message.content.split(' ');
+    const botName = args[1];
+    const steps = parseInt(args[2]);
+
+    if (!botName || !minecraftBots[botName]) {
+      return message.reply('Geçerli bir bot ismi girin veya bot aktif değil.');
+    }
+
+    if (isNaN(steps) || steps <= 0) {
+      return message.reply('Geçerli bir sayı girin.');
+    }
+
+    const bot = minecraftBots[botName].bot;
+    for (let i = 0; i < steps; i++) {
+      bot.lookAt(bot.entity.position.offset(0, 0, -1));  // Bu örnekte botu geri göndermek için
+      bot.setControlState('back', true);
+      setTimeout(() => {
+        bot.setControlState('back', false);
+      }, 1000);
+    }
+    message.reply(`${botName} botu ${steps} adım geri gönderildi.`);
+  }
+
+  // qban komutu ile botu banlama
+  else if (message.content.startsWith('qban')) {
+    const args = message.content.split(' ');
+    const botName = args[1];
+
+    if (!botName || !minecraftBots[botName]) {
+      return message.reply('Geçerli bir bot ismi girin veya bot aktif değil.');
+    }
+
+    const bot = minecraftBots[botName].bot;
+    bot.end();
+    delete minecraftBots[botName];
+       delete botStartTimes[botName];
+
+    message.reply(`${botName} botu banlandı ve Minecraft sunucusundan çıkarıldı.`);
+  }
+
+  // qekle komutu ile sınırsız bot ekleme hakkı verme
+  else if (message.content.startsWith('qekle')) {
+    if (message.author.id !== allowedUserId) {
+      return message.reply('Bu komutu sadece sunucu sahibi kullanabilir.');
+    }
+
+    const taggedUser = message.mentions.users.first();
+    if (!taggedUser) {
+      return message.reply('Bir kullanıcıyı etiketleyin.');
+    }
+
+    // Sınırsız bot ekleme hakkı verme
+    specialUserId = taggedUser.id;
+    setTimeout(() => {
+      specialUserId = null; // 30 gün sonra hakkı sıfırlama
+    }, 30 * 24 * 60 * 60 * 1000); // 30 gün (ms cinsinden)
+
+    message.reply(`${taggedUser.username} adlı kullanıcıya sınırsız bot ekleme hakkı verildi!`);
+  }
 });
+
+// Discord Bot'u Çalıştırma
+discordClient.login(process.env.DISCORD_TOKEN);
